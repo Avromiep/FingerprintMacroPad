@@ -93,6 +93,15 @@
                             </DockPanel>
 
                             <DockPanel Margin="0,14,0,0">
+                                <CheckBox x:Name="SwWake" Style="{StaticResource ToggleSwitch}" DockPanel.Dock="Right"
+                                          Checked="SwWake_Toggled" Unchecked="SwWake_Toggled"/>
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource CardTitle}" Text="Wake screen on tap"/>
+                                    <TextBlock Style="{StaticResource Dim}" Text="When the display is off, a tap wakes it instead of firing a macro."/>
+                                </StackPanel>
+                            </DockPanel>
+
+                            <DockPanel Margin="0,14,0,0">
                                 <CheckBox x:Name="SwAutoStart" Style="{StaticResource ToggleSwitch}" DockPanel.Dock="Right"
                                           Checked="SwAutoStart_Toggled" Unchecked="SwAutoStart_Toggled"/>
                                 <StackPanel>

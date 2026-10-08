@@ -16,6 +16,7 @@ public partial class App : Application
     private System.Threading.Mutex? _mutex;
     private System.Threading.EventWaitHandle? _showEvent;
     private System.Threading.RegisteredWaitHandle? _showReg;
+    private DisplayMonitor? _displayMonitor;
     private bool _locked;
     private bool _shuttingDown;
 
@@ -49,6 +50,11 @@ public partial class App : Application
 
         Engine = new FingerEngine(Config);
         Engine.PatternFired += OnPatternFired;
+
+        // Track display on/off so a touch while the screen is asleep wakes it
+        // instead of firing a macro.
+        _displayMonitor = new DisplayMonitor();
+        _displayMonitor.DisplayOffChanged += off => Engine.DisplayOff = off;
 
         SystemEvents.SessionSwitch += OnSessionSwitch;
 
@@ -114,10 +120,17 @@ public partial class App : Application
         RefreshTray();
     }
 
+    public void SetWakeScreenOnTap(bool value)
+    {
+        Config.WakeScreenOnTap = value;       // read live by the engine
+        Config.Save();
+    }
+
     public void ApplyImportedConfig(AppConfig imported)
     {
         // Copy fields into the live Config so the engine (which holds this instance) sees them.
         Config.ExcludeUnlockFinger = imported.ExcludeUnlockFinger;
+        Config.WakeScreenOnTap = imported.WakeScreenOnTap;
         Config.TapWindowMs = imported.TapWindowMs;
         Config.DebounceMs = imported.DebounceMs;
         Config.Theme = imported.Theme;
@@ -198,6 +211,7 @@ public partial class App : Application
         try { UpdateService.StartSwap(newExePath); } catch { }
         try { SystemEvents.SessionSwitch -= OnSessionSwitch; } catch { }
         try { _showReg?.Unregister(null); _showEvent?.Dispose(); } catch { }
+        try { _displayMonitor?.Dispose(); } catch { }
         try { Engine.Dispose(); } catch { }
         if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
         Shutdown();
@@ -208,6 +222,7 @@ public partial class App : Application
         _shuttingDown = true;
         try { SystemEvents.SessionSwitch -= OnSessionSwitch; } catch { }
         try { _showReg?.Unregister(null); _showEvent?.Dispose(); } catch { }
+        try { _displayMonitor?.Dispose(); } catch { }
         Engine.Dispose();
         if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
         Shutdown();

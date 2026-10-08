@@ -25,6 +25,7 @@ public partial class MainWindow : Window
         _loading = true;
         SwEnabled.IsChecked = Cfg.Enabled;
         SwExclude.IsChecked = Cfg.ExcludeUnlockFinger;
+        SwWake.IsChecked = Cfg.WakeScreenOnTap;
         SwAutoStart.IsChecked = Cfg.AutoStart;
         UpdateTapLabel();
         UpdateDebLabel();
@@ -96,6 +97,12 @@ public partial class MainWindow : Window
     {
         if (_loading) return;
         App.Current.SetExcludeUnlockFinger(SwExclude.IsChecked == true);
+    }
+
+    private void SwWake_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        App.Current.SetWakeScreenOnTap(SwWake.IsChecked == true);
     }
 
     private void SwAutoStart_Toggled(object sender, RoutedEventArgs e)
@@ -180,6 +187,7 @@ public partial class MainWindow : Window
         _loading = true;
         SwEnabled.IsChecked = Cfg.Enabled;
         SwExclude.IsChecked = Cfg.ExcludeUnlockFinger;
+        SwWake.IsChecked = Cfg.WakeScreenOnTap;
         UpdateTapLabel(); UpdateDebLabel(); UpdateThemeGlyph();
         Pc1.Init(1, "Single tap", Cfg.Patterns[1]);
         Pc2.Init(2, "Double tap", Cfg.Patterns[2]);

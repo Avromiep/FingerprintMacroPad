@@ -54,6 +54,7 @@ public sealed class AppConfig
 {
     public bool Enabled { get; set; } = true;
     public bool ExcludeUnlockFinger { get; set; } = false;
+    public bool WakeScreenOnTap { get; set; } = true;
     public int TapWindowMs { get; set; } = 500;
     public int DebounceMs { get; set; } = 120;
     public bool AutoStart { get; set; } = false;

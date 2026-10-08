@@ -20,6 +20,12 @@ public sealed class FingerEngine : IDisposable
     private DateTime _lastTapUtc = DateTime.MinValue;
     private System.Threading.Timer? _flushTimer;
 
+    // Display power state (set by the app from power-broadcast events). When the
+    // screen is off, a touch should wake it rather than fire a macro.
+    private volatile bool _displayOff;
+    private DateTime _wakeGraceUntil = DateTime.MinValue;
+    public bool DisplayOff { get => _displayOff; set => _displayOff = value; }
+
     /// <summary>Fired as each tap lands, with the running count in the current burst.</summary>
     public event Action<int>? TapProgress;
     /// <summary>Fired once a burst completes, with the final tap count (the pattern).</summary>
@@ -102,6 +108,21 @@ public sealed class FingerEngine : IDisposable
     {
         int count;
         var now = DateTime.UtcNow;
+
+        // If the display is off (but the PC is unlocked), a touch should just wake
+        // the screen — not fire a macro. Swallow that touch and the brief burst after.
+        if (_config.WakeScreenOnTap)
+        {
+            if (_displayOff)
+            {
+                DisplayWaker.Wake();
+                _displayOff = false;                       // optimistic; power event confirms
+                _wakeGraceUntil = now.AddMilliseconds(1200);
+                return;
+            }
+            if (now < _wakeGraceUntil) return;             // trailing touches of the wake tap
+        }
+
         lock (_tapLock)
         {
             // Debounce: ignore sensor re-fires from a lingering press so a slightly
