@@ -117,6 +117,7 @@ public partial class App : Application
     {
         Config.ExcludeUnlockFinger = value;   // read live by the engine, no restart needed
         Config.Save();
+        Engine.Reevaluate();                  // switch fast/match path right away
         RefreshTray();
     }
 
@@ -124,6 +125,7 @@ public partial class App : Application
     {
         Config.WakeScreenOnTap = value;       // read live by the engine
         Config.Save();
+        Engine.Reevaluate();
     }
 
     public void ApplyImportedConfig(AppConfig imported)

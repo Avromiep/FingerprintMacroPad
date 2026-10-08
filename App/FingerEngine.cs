@@ -34,6 +34,13 @@ public sealed class FingerEngine : IDisposable
     {
         if (_displayOff == off) return;
         _displayOff = off;
+        Reevaluate();
+    }
+
+    /// <summary>Cancels the in-flight sensor op so the loop re-picks its fast/match path
+    /// immediately after a relevant setting (exclude-unlock, wake-on-tap) changes.</summary>
+    public void Reevaluate()
+    {
         try { if (_running && _session != 0) WinBio.Cancel(_session); } catch { }
     }
 
@@ -89,44 +96,43 @@ public sealed class FingerEngine : IDisposable
 
         while (!_stopRequested)
         {
-            // FAST wake path: while the screen is asleep, detect a touch with
-            // LocateSensor (no fingerprint matching) so waking is near-instant.
-            // Identify's matching step is what made waking feel slow.
-            if (_displayOff && _config.WakeScreenOnTap)
+            bool wakeMode = _displayOff && _config.WakeScreenOnTap;
+
+            // FAST path (touch-only, no fingerprint matching) whenever we don't need to
+            // tell the unlock finger apart: i.e. waking the screen, or any-finger macro
+            // mode. Identify's matching step is the lag, so we skip it here.
+            if (wakeMode || !_config.ExcludeUnlockFinger)
             {
                 int lr = WinBio.LocateSensor(_session, out _);
                 if (_stopRequested) break;
                 uint ulr = (uint)lr;
                 if (ulr == WinBio.E_ACCESSDENIED) { SetStatus("Needs administrator"); break; }
-                if (lr == WinBio.S_OK)
+                if (lr != WinBio.S_OK) continue;    // no touch, or cancelled by a mode change
+
+                if (wakeMode)                        // screen asleep -> wake, not a macro
                 {
                     DisplayWaker.Wake();
                     _displayOff = false;
                     _wakeGraceUntil = DateTime.UtcNow.AddMilliseconds(1200);
+                    continue;
                 }
-                continue;   // re-evaluate mode (a state change may have cancelled Locate)
+                if (DateTime.UtcNow < _wakeGraceUntil) continue;  // trailing touches of a wake
+                RegisterTap();
+                continue;
             }
 
+            // MATCH path: "ignore my unlock finger" is on, so identify the finger.
             hr = WinBio.Identify(_session, out _, out _, out _, out _);
             if (_stopRequested) break;
             uint uhr = (uint)hr;
-
             if (uhr == WinBio.E_ACCESSDENIED) { SetStatus("Needs administrator"); break; }
 
-            // A finger touched the sensor: matched (S_OK), unrecognized, or a poor read.
             bool touched = hr == WinBio.S_OK || uhr == WinBio.E_UNKNOWN_ID || uhr == WinBio.E_BAD_CAPTURE;
             if (!touched) continue;
 
-            // Grace window right after a wake (or a late display-off): swallow, don't fire.
-            if (HandleWakeIfDisplayOff()) continue;
+            if (HandleWakeIfDisplayOff()) continue;   // display slept mid-identify, or grace
 
-            bool isTap;
-            if (uhr == WinBio.E_UNKNOWN_ID)
-                isTap = true;                                   // some other finger
-            else
-                isTap = !_config.ExcludeUnlockFinger;           // enrolled finger / ambiguous read
-
-            if (isTap) RegisterTap();
+            if (uhr == WinBio.E_UNKNOWN_ID) RegisterTap();   // only non-enrolled fingers fire
         }
 
         _flushTimer?.Dispose(); _flushTimer = null;
@@ -153,9 +159,23 @@ public sealed class FingerEngine : IDisposable
         return now < _wakeGraceUntil;                      // trailing touches of the wake
     }
 
+    /// <summary>Highest tap count that has an action assigned (0 if none). Once a burst
+    /// reaches it there's nothing higher to wait for, so we can fire immediately.</summary>
+    private int MaxActivePattern()
+    {
+        int max = 0;
+        var patterns = _config.Patterns;
+        if (patterns != null)
+            for (int n = 1; n <= 4; n++)
+                if (patterns.TryGetValue(n, out var a) && a != null && a.Type != ActionType.None)
+                    max = n;
+        return max;
+    }
+
     private void RegisterTap()
     {
         int count;
+        bool fireNow = false;
         var now = DateTime.UtcNow;
         lock (_tapLock)
         {
@@ -164,9 +184,22 @@ public sealed class FingerEngine : IDisposable
             if ((now - _lastTapUtc).TotalMilliseconds < _config.DebounceMs) return;
             _lastTapUtc = now;
             count = ++_tapCount;
-            _flushTimer?.Change(_config.TapWindowMs, Timeout.Infinite);
+
+            // If we've reached the highest macro the user actually assigned, there's
+            // nothing longer to wait for — fire right away instead of the full window.
+            int max = MaxActivePattern();
+            if (max > 0 && count >= max)
+            {
+                _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+                fireNow = true;
+            }
+            else
+            {
+                _flushTimer?.Change(_config.TapWindowMs, Timeout.Infinite);
+            }
         }
         TapProgress?.Invoke(count);
+        if (fireNow) Flush();
     }
 
     private void Flush()
