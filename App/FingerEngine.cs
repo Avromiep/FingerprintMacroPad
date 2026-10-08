@@ -34,14 +34,9 @@ public sealed class FingerEngine : IDisposable
     {
         if (_displayOff == off) return;
         _displayOff = off;
-        Reevaluate();
-    }
-
-    /// <summary>Cancels the in-flight sensor op so the loop re-picks its fast/match path
-    /// immediately after a relevant setting (exclude-unlock, wake-on-tap) changes.</summary>
-    public void Reevaluate()
-    {
-        try { if (_running && _session != 0) WinBio.Cancel(_session); } catch { }
+        Diag.Log($"display {(off ? "OFF" : "ON")}");
+        // No cancel needed: the loop's blocked Identify simply returns on the next
+        // touch, and HandleWakeIfDisplayOff wakes the screen then.
     }
 
     /// <summary>Fired as each tap lands, with the running count in the current burst.</summary>
@@ -74,6 +69,7 @@ public sealed class FingerEngine : IDisposable
     private void SetStatus(string s)
     {
         Status = s;
+        Diag.Log($"engine status: {s}");
         StatusChanged?.Invoke(s);
     }
 
@@ -96,43 +92,32 @@ public sealed class FingerEngine : IDisposable
 
         while (!_stopRequested)
         {
-            bool wakeMode = _displayOff && _config.WakeScreenOnTap;
-
-            // FAST path (touch-only, no fingerprint matching) whenever we don't need to
-            // tell the unlock finger apart: i.e. waking the screen, or any-finger macro
-            // mode. Identify's matching step is the lag, so we skip it here.
-            if (wakeMode || !_config.ExcludeUnlockFinger)
-            {
-                int lr = WinBio.LocateSensor(_session, out _);
-                if (_stopRequested) break;
-                uint ulr = (uint)lr;
-                if (ulr == WinBio.E_ACCESSDENIED) { SetStatus("Needs administrator"); break; }
-                if (lr != WinBio.S_OK) continue;    // no touch, or cancelled by a mode change
-
-                if (wakeMode)                        // screen asleep -> wake, not a macro
-                {
-                    DisplayWaker.Wake();
-                    _displayOff = false;
-                    _wakeGraceUntil = DateTime.UtcNow.AddMilliseconds(1200);
-                    continue;
-                }
-                if (DateTime.UtcNow < _wakeGraceUntil) continue;  // trailing touches of a wake
-                RegisterTap();
-                continue;
-            }
-
-            // MATCH path: "ignore my unlock finger" is on, so identify the finger.
+            // Always detect touches with Identify. It does fingerprint matching (a bit
+            // slower), but unlike LocateSensor it works on EVERY sensor — LocateSensor
+            // isn't supported on some fingerprint readers, which silently broke detection
+            // there (nothing happened on touch). Reliability over the small speed win.
             hr = WinBio.Identify(_session, out _, out _, out _, out _);
             if (_stopRequested) break;
             uint uhr = (uint)hr;
             if (uhr == WinBio.E_ACCESSDENIED) { SetStatus("Needs administrator"); break; }
 
+            // A finger touched the sensor: matched (S_OK), unrecognized, or a poor read.
             bool touched = hr == WinBio.S_OK || uhr == WinBio.E_UNKNOWN_ID || uhr == WinBio.E_BAD_CAPTURE;
             if (!touched) continue;
 
-            if (HandleWakeIfDisplayOff()) continue;   // display slept mid-identify, or grace
+            if (_displayOff) Diag.Log($"touch while display OFF (hr=0x{uhr:X8})");
 
-            if (uhr == WinBio.E_UNKNOWN_ID) RegisterTap();   // only non-enrolled fingers fire
+            // Wake the screen on ANY touch when the display is off — not a macro, so it
+            // ignores the exclude-unlock-finger filter.
+            if (HandleWakeIfDisplayOff()) continue;
+
+            bool isTap;
+            if (uhr == WinBio.E_UNKNOWN_ID)
+                isTap = true;                                   // some other finger
+            else
+                isTap = !_config.ExcludeUnlockFinger;           // enrolled finger / ambiguous read
+
+            if (isTap) RegisterTap();
         }
 
         _flushTimer?.Dispose(); _flushTimer = null;
@@ -151,6 +136,7 @@ public sealed class FingerEngine : IDisposable
         var now = DateTime.UtcNow;
         if (_displayOff)
         {
+            Diag.Log("WAKE display");
             DisplayWaker.Wake();
             _displayOff = false;                           // optimistic; power event confirms
             _wakeGraceUntil = now.AddMilliseconds(1200);

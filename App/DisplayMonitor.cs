@@ -40,7 +40,10 @@ public sealed class DisplayMonitor : IDisposable
         {
             var setting = Marshal.PtrToStructure<POWERBROADCAST_SETTING>(lParam);
             if (setting.PowerSetting == GUID_CONSOLE_DISPLAY_STATE)
+            {
+                Diag.Log($"display power state = {setting.Data} (0=off,1=on,2=dim)");
                 DisplayOffChanged?.Invoke(setting.Data == 0);   // 0 = off, 1 = on, 2 = dimmed
+            }
         }
         return IntPtr.Zero;
     }
