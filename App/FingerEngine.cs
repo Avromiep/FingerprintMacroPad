@@ -82,17 +82,21 @@ public sealed class FingerEngine : IDisposable
             if (_stopRequested) break;
             uint uhr = (uint)hr;
 
+            if (uhr == WinBio.E_ACCESSDENIED) { SetStatus("Needs administrator"); break; }
+
+            // A finger touched the sensor: matched (S_OK), unrecognized, or a poor read.
+            bool touched = hr == WinBio.S_OK || uhr == WinBio.E_UNKNOWN_ID || uhr == WinBio.E_BAD_CAPTURE;
+            if (!touched) continue;
+
+            // Wake the screen on ANY touch when the display is off — this is not a
+            // macro, so it ignores the exclude-unlock-finger filter below.
+            if (HandleWakeIfDisplayOff()) continue;
+
             bool isTap;
-            if (hr == WinBio.S_OK)
-                isTap = !_config.ExcludeUnlockFinger;          // the enrolled (unlock) finger
-            else if (uhr == WinBio.E_UNKNOWN_ID)
+            if (uhr == WinBio.E_UNKNOWN_ID)
                 isTap = true;                                   // some other finger
-            else if (uhr == WinBio.E_BAD_CAPTURE)
-                isTap = !_config.ExcludeUnlockFinger;           // ambiguous read; count only in any-finger mode
-            else if (uhr == WinBio.E_ACCESSDENIED)
-            { SetStatus("Needs administrator"); break; }
             else
-                isTap = false;
+                isTap = !_config.ExcludeUnlockFinger;           // enrolled finger / ambiguous read
 
             if (isTap) RegisterTap();
         }
@@ -104,25 +108,27 @@ public sealed class FingerEngine : IDisposable
         SetStatus("Paused");
     }
 
+    /// <summary>If the display is off (PC unlocked), wake it and swallow this touch
+    /// plus the brief burst after. Returns true if the touch was consumed for waking.
+    /// Runs for ANY finger — independent of the exclude-unlock-finger macro filter.</summary>
+    private bool HandleWakeIfDisplayOff()
+    {
+        if (!_config.WakeScreenOnTap) return false;
+        var now = DateTime.UtcNow;
+        if (_displayOff)
+        {
+            DisplayWaker.Wake();
+            _displayOff = false;                           // optimistic; power event confirms
+            _wakeGraceUntil = now.AddMilliseconds(1200);
+            return true;
+        }
+        return now < _wakeGraceUntil;                      // trailing touches of the wake
+    }
+
     private void RegisterTap()
     {
         int count;
         var now = DateTime.UtcNow;
-
-        // If the display is off (but the PC is unlocked), a touch should just wake
-        // the screen — not fire a macro. Swallow that touch and the brief burst after.
-        if (_config.WakeScreenOnTap)
-        {
-            if (_displayOff)
-            {
-                DisplayWaker.Wake();
-                _displayOff = false;                       // optimistic; power event confirms
-                _wakeGraceUntil = now.AddMilliseconds(1200);
-                return;
-            }
-            if (now < _wakeGraceUntil) return;             // trailing touches of the wake tap
-        }
-
         lock (_tapLock)
         {
             // Debounce: ignore sensor re-fires from a lingering press so a slightly
