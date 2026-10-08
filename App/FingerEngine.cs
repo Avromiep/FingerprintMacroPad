@@ -24,7 +24,18 @@ public sealed class FingerEngine : IDisposable
     // screen is off, a touch should wake it rather than fire a macro.
     private volatile bool _displayOff;
     private DateTime _wakeGraceUntil = DateTime.MinValue;
-    public bool DisplayOff { get => _displayOff; set => _displayOff = value; }
+    public bool DisplayOff => _displayOff;
+
+    /// <summary>Called when the monitor turns on/off. Cancels the in-flight sensor
+    /// operation so the loop immediately switches between the fast wake path (screen
+    /// off) and the normal Identify path (screen on) instead of waiting for the next
+    /// touch to return.</summary>
+    public void SetDisplayOff(bool off)
+    {
+        if (_displayOff == off) return;
+        _displayOff = off;
+        try { if (_running && _session != 0) WinBio.Cancel(_session); } catch { }
+    }
 
     /// <summary>Fired as each tap lands, with the running count in the current burst.</summary>
     public event Action<int>? TapProgress;
@@ -78,6 +89,24 @@ public sealed class FingerEngine : IDisposable
 
         while (!_stopRequested)
         {
+            // FAST wake path: while the screen is asleep, detect a touch with
+            // LocateSensor (no fingerprint matching) so waking is near-instant.
+            // Identify's matching step is what made waking feel slow.
+            if (_displayOff && _config.WakeScreenOnTap)
+            {
+                int lr = WinBio.LocateSensor(_session, out _);
+                if (_stopRequested) break;
+                uint ulr = (uint)lr;
+                if (ulr == WinBio.E_ACCESSDENIED) { SetStatus("Needs administrator"); break; }
+                if (lr == WinBio.S_OK)
+                {
+                    DisplayWaker.Wake();
+                    _displayOff = false;
+                    _wakeGraceUntil = DateTime.UtcNow.AddMilliseconds(1200);
+                }
+                continue;   // re-evaluate mode (a state change may have cancelled Locate)
+            }
+
             hr = WinBio.Identify(_session, out _, out _, out _, out _);
             if (_stopRequested) break;
             uint uhr = (uint)hr;
@@ -88,8 +117,7 @@ public sealed class FingerEngine : IDisposable
             bool touched = hr == WinBio.S_OK || uhr == WinBio.E_UNKNOWN_ID || uhr == WinBio.E_BAD_CAPTURE;
             if (!touched) continue;
 
-            // Wake the screen on ANY touch when the display is off — this is not a
-            // macro, so it ignores the exclude-unlock-finger filter below.
+            // Grace window right after a wake (or a late display-off): swallow, don't fire.
             if (HandleWakeIfDisplayOff()) continue;
 
             bool isTap;

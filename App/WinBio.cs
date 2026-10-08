@@ -4,9 +4,11 @@ namespace FingerprintMacroPad;
 
 /// <summary>
 /// Minimal, strictly READ-ONLY Windows Biometric Framework interop.
-/// Only OpenSession / Identify / Cancel / CloseSession are declared here.
+/// Only OpenSession / Identify / LocateSensor / Cancel / CloseSession are declared here.
 /// There is deliberately NO enroll, delete, or capture-sample function, so this
 /// code cannot add, remove, or alter any enrolled fingerprint, nor read a print image.
+/// LocateSensor only detects THAT a finger touched (no image, no match) — used for the
+/// fast "wake the screen" path when the display is asleep.
 /// </summary>
 internal static class WinBio
 {
@@ -42,4 +44,8 @@ internal static class WinBio
         out IDENTITY identity,
         out byte subFactor,
         out uint rejectDetail);
+
+    // Detects a touch only (no capture image, no matching) — fast.
+    [DllImport("winbio.dll", EntryPoint = "WinBioLocateSensor")]
+    public static extern int LocateSensor(uint sessionHandle, out uint unitId);
 }

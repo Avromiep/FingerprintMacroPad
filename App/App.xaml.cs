@@ -54,7 +54,7 @@ public partial class App : Application
         // Track display on/off so a touch while the screen is asleep wakes it
         // instead of firing a macro.
         _displayMonitor = new DisplayMonitor();
-        _displayMonitor.DisplayOffChanged += off => Engine.DisplayOff = off;
+        _displayMonitor.DisplayOffChanged += off => Engine.SetDisplayOff(off);
 
         SystemEvents.SessionSwitch += OnSessionSwitch;
 
